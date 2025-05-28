@@ -1,0 +1,171 @@
+-- Active: 1726856121617@@127.0.0.1@3306@retail_store3
+CREATE DATABASE retail_store3;
+USE retail_store3;
+
+CREATE TABLE Users (
+    UserID INT PRIMARY KEY AUTO_INCREMENT,
+    UserName VARCHAR(50) UNIQUE NOT NULL,
+    Password VARCHAR(255) NOT NULL,
+    DisplayName VARCHAR(100) NOT NULL,
+    Role ENUM('CUSTOMER', 'CASHIER', 'MANAGER') NOT NULL,
+    Email VARCHAR(100)
+);
+
+CREATE TABLE Products (
+    ProductID INT PRIMARY KEY AUTO_INCREMENT,
+    Name VARCHAR(100) NOT NULL,
+    Description TEXT,
+    Price DECIMAL(10, 2) NOT NULL,
+    Quantity DECIMAL(10, 2) NOT NULL,
+    Category VARCHAR(50),
+    Barcode VARCHAR(50) UNIQUE,
+    LastRestockDate DATETIME,
+    ReorderPoint DECIMAL(10, 2) DEFAULT 10.0,
+    CONSTRAINT chk_price CHECK (Price > 0),
+    CONSTRAINT chk_quantity CHECK (Quantity >= 0)
+);
+
+CREATE TABLE Orders (
+    OrderID INT PRIMARY KEY AUTO_INCREMENT,
+    CustomerID INT NOT NULL,
+    CashierID INT,
+    OrderDate DATETIME DEFAULT CURRENT_TIMESTAMP,
+    AssignedTime DATETIME,
+    CompletedTime DATETIME,
+    TotalCost DECIMAL(10, 2) NOT NULL,
+    TotalTax DECIMAL(10, 2) NOT NULL,
+    PaymentMethod ENUM('CASH', 'CREDIT_CARD', 'DEBIT_CARD'),
+    Status ENUM('PENDING', 'PROCESSING', 'COMPLETED', 'CANCELLED') DEFAULT 'PENDING',
+    FOREIGN KEY (CustomerID) REFERENCES Users(UserID),
+    FOREIGN KEY (CashierID) REFERENCES Users(UserID)
+);
+
+CREATE TABLE OrderLine (
+    OrderID INT,
+    ProductID INT,
+    Quantity DECIMAL(10, 2) NOT NULL,
+    UnitPrice DECIMAL(10, 2) NOT NULL,
+    Cost DECIMAL(10, 2) NOT NULL,
+    PRIMARY KEY (OrderID, ProductID),
+    FOREIGN KEY (OrderID) REFERENCES Orders(OrderID),
+    FOREIGN KEY (ProductID) REFERENCES Products(ProductID)
+);
+
+CREATE TABLE InventoryLog (
+    LogID INT PRIMARY KEY AUTO_INCREMENT,
+    ProductID INT NOT NULL,
+    Quantity DECIMAL(10, 2) NOT NULL,
+    Type ENUM('RESTOCK', 'SALE', 'ADJUSTMENT') NOT NULL,
+    LogDate DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UserID INT NOT NULL,
+    Notes TEXT,
+    FOREIGN KEY (ProductID) REFERENCES Products(ProductID),
+    FOREIGN KEY (UserID) REFERENCES Users(UserID)
+);
+
+-- Indexes for better performance
+CREATE INDEX idx_order_status ON Orders(Status);
+CREATE INDEX idx_cashier_orders ON Orders(CashierID, Status);
+CREATE INDEX idx_product_barcode ON Products(Barcode);
+CREATE INDEX idx_inventory_log_date ON InventoryLog(LogDate);
+
+-- Trigger for LastRestockDate update
+DELIMITER //
+CREATE TRIGGER before_restock
+BEFORE UPDATE ON Products
+FOR EACH ROW
+BEGIN
+    IF NEW.Quantity > OLD.Quantity THEN
+        SET NEW.LastRestockDate = CURRENT_TIMESTAMP;
+    END IF;
+END//
+
+-- Trigger for inventory logging
+CREATE TRIGGER after_inventory_change
+AFTER UPDATE ON Products
+FOR EACH ROW
+BEGIN
+    IF NEW.Quantity != OLD.Quantity THEN
+        INSERT INTO InventoryLog (ProductID, Quantity, Type, UserID, Notes)
+        VALUES (
+            NEW.ProductID,
+            NEW.Quantity - OLD.Quantity,
+            CASE 
+                WHEN NEW.Quantity > OLD.Quantity THEN 'RESTOCK'
+                ELSE 'SALE'
+            END,
+            1,
+            'Automatic inventory update'
+        );
+    END IF;
+END//
+
+-- Trigger for order status validation
+CREATE TRIGGER before_order_status_update
+BEFORE UPDATE ON Orders
+FOR EACH ROW
+BEGIN
+    IF OLD.Status = 'COMPLETED' AND NEW.Status != 'COMPLETED' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Cannot modify COMPLETED orders';
+    END IF;
+    
+    IF OLD.Status = 'CANCELLED' AND NEW.Status != 'CANCELLED' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Cannot modify CANCELLED orders';
+    END IF;
+    
+    IF NEW.Status = 'PROCESSING' AND OLD.Status != 'PENDING' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Can only process PENDING orders';
+    END IF;
+    
+    IF NEW.Status = 'COMPLETED' AND OLD.Status != 'PROCESSING' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Can only complete orders that are PROCESSING';
+    END IF;
+    
+    -- Set timestamps
+    IF NEW.Status = 'PROCESSING' AND OLD.Status = 'PENDING' THEN
+        SET NEW.AssignedTime = CURRENT_TIMESTAMP;
+    END IF;
+    
+    IF NEW.Status = 'COMPLETED' AND OLD.Status = 'PROCESSING' THEN
+        SET NEW.CompletedTime = CURRENT_TIMESTAMP;
+    END IF;
+END//
+
+DELIMITER ;
+
+-- Sample Data
+INSERT INTO Users (UserName, Password, DisplayName, Role, Email) VALUES
+('john_customer', 'pass123', 'John Doe', 'CUSTOMER', 'john@email.com'),
+('mike_cashier', 'pass789', 'Mike Johnson', 'CASHIER', 'mike@store.com'),
+('jack_cashier', 'pass456', 'Jack Buccarati', 'CASHIER', 'jack@store.com'),
+('nam', 'namdeptrai', 'System Admin', 'MANAGER', 'admin@store.com'),
+('alice_customer', 'alice123', 'Alice Smith', 'CUSTOMER', 'alice@email.com'),
+('jane_customer', 'jane456', 'Jane Doe', 'CUSTOMER', 'jane@email.com'),
+('bob_customer', 'bob789', 'Bob Marley', 'CUSTOMER', 'bob@email.com'),
+('charlie_customer', 'charlie000', 'Charlie Brown', 'CUSTOMER', 'charlie@email.com');
+
+INSERT INTO Products (Name, Description, Price, Quantity, Category, Barcode) VALUES
+('Laptop Pro', 'High performance laptop', 999.99, 50, 'Electronics', 'LAP123'),
+('Smartphone X', 'Latest smartphone model', 599.99, 100, 'Electronics', 'PHN456'),
+('Coffee Maker', 'Premium coffee machine', 79.99, 30, 'Appliances', 'COF789'),
+('Gaming Monitor', '4K UHD gaming monitor', 299.99, 20, 'Electronics', 'MON234'),
+('Bluetooth Headphones', 'Noise-cancelling over-ear headphones', 149.99, 75, 'Electronics', 'BTH567'),
+('Microwave Oven', 'Compact microwave oven', 99.99, 40, 'Appliances', 'MIC890'),
+('Refrigerator XL', 'Energy-efficient refrigerator', 799.99, 10, 'Appliances', 'REF321'),
+('Running Shoes', 'Lightweight running shoes', 49.99, 200, 'Apparel', 'SHO654'),
+('Desk Chair', 'Ergonomic office chair', 129.99, 35, 'Furniture', 'CHA987'),
+('Bookshelf', 'Modern 5-shelf bookcase', 89.99, 25, 'Furniture', 'BKS456'),
+('Electric Kettle', 'Fast-boiling electric kettle', 29.99, 50, 'Appliances', 'KET321'),
+('Smart Watch', 'Fitness tracker with GPS', 199.99, 60, 'Electronics', 'WCH678'),
+('Vacuum Cleaner', 'Cordless vacuum cleaner', 159.99, 45, 'Appliances', 'VAC012'),
+('Yoga Mat', 'Eco-friendly yoga mat', 24.99, 100, 'Fitness', 'MAT345'),
+('Dumbbell Set', 'Adjustable weight dumbbell set', 69.99, 50, 'Fitness', 'DBL678'),
+('Backpack', 'Water-resistant travel backpack', 39.99, 80, 'Accessories', 'BAG543'),
+('Printer', 'Wireless all-in-one printer', 199.99, 20, 'Electronics', 'PRT890'),
+('Tablet', '10-inch tablet with high resolution', 299.99, 40, 'Electronics', 'TAB112'),
+('Desk Lamp', 'LED desk lamp with USB charging', 19.99, 70, 'Furniture', 'LMP234'),
+('Action Camera', '4K action camera with accessories', 249.99, 30, 'Electronics', 'CAM876');
