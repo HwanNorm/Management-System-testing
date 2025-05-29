@@ -1,30 +1,22 @@
 package com.retailstore;
 
+import com.retailstore.AppConfig;
 import com.retailstore.dao.DataAdapter;
 import com.retailstore.dao.MongoDataAdapter;
 import com.retailstore.dao.RedisDataAdapter;
-import com.retailstore.controller.*;
-import com.retailstore.view.*;
 import com.retailstore.model.Users;
+import com.retailstore.view.*;
+import com.retailstore.controller.*;
 
 import javax.swing.*;
 import java.sql.*;
-import java.io.InputStream;
-import java.util.Properties;
 
-/**
- * Main Application class - Singleton pattern
- * Manages application initialization, database connections, and view coordination
- */
 public class Application {
-    private static Application instance;
+    private static Application instance;   // Singleton pattern
     private static Connection connection;
     private DataAdapter dataAdapter;
     private Users currentUser = null;
-    
-    // Configuration
-    private Properties config;
-    private static final String CONFIG_FILE = "/application.properties";
+    private AppConfig config;
 
     // Views
     private LoginScreen loginScreen;
@@ -40,12 +32,9 @@ public class Application {
     private CheckoutController checkoutController;
     private ManagerController managerController;
 
-    // Initialization flag
+    // Add a flag to track initialization
     private static boolean initializing = false;
 
-    /**
-     * Singleton instance getter
-     */
     public static Application getInstance() {
         if (instance == null) {
             synchronized (Application.class) {
@@ -59,107 +48,61 @@ public class Application {
         return instance;
     }
 
-    /**
-     * Private constructor - enforces singleton pattern
-     */
     private Application() {
+        // Prevent creation through reflection
         if (instance != null) {
             throw new RuntimeException("Use getInstance() method to get the single instance of this class.");
         }
 
-        loadConfiguration();
-        initializeDatabase();
-        initializeViews();
-        initializeControllers();
-    }
-
-    /**
-     * Load configuration from properties file
-     */
-    private void loadConfiguration() {
-        config = new Properties();
-        try (InputStream input = getClass().getResourceAsStream(CONFIG_FILE)) {
-            if (input != null) {
-                config.load(input);
-                System.out.println("Configuration loaded successfully");
-            } else {
-                System.out.println("Configuration file not found, using defaults");
-                setDefaultConfiguration();
-            }
-        } catch (Exception ex) {
-            System.err.println("Error loading configuration: " + ex.getMessage());
-            setDefaultConfiguration();
+        try {
+            config = AppConfig.getInstance();
+            initializeDatabase();
+            initializeViews();
+            initializeControllers();
+        } catch (Exception e) {
+            System.err.println("Application initialization error: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Failed to initialize application", e);
         }
     }
 
-    /**
-     * Set default configuration values
-     */
-    private void setDefaultConfiguration() {
-        config.setProperty("mysql.url", "jdbc:mysql://localhost:3306/retail_store3?useSSL=false&allowPublicKeyRetrieval=true");
-        config.setProperty("mysql.username", "root");
-        config.setProperty("mysql.password", "fm92mhziczac");
-        config.setProperty("mongodb.database", "retail_store2");
-        config.setProperty("redis.host", "redis-11107.c323.us-east-1-2.ec2.redns.redis-cloud.com");
-        config.setProperty("redis.port", "11107");
-        config.setProperty("redis.password", "fm92mhziczac");
-    }
-
-    /**
-     * Initialize database connections
-     */
     private void initializeDatabase() {
-        initializeMySQL();
-        initializeMongoDB();
-        initializeRedis();
-        
-        dataAdapter = new DataAdapter(connection);
-    }
-
-    /**
-     * Initialize MySQL connection
-     */
-    private void initializeMySQL() {
         try {
             if (connection == null || connection.isClosed()) {
                 Class.forName("com.mysql.cj.jdbc.Driver");
-                String url = config.getProperty("mysql.url");
-                String username = config.getProperty("mysql.username");
-                String password = config.getProperty("mysql.password");
-
-                connection = DriverManager.getConnection(url, username, password);
+                
+                connection = DriverManager.getConnection(
+                    config.getMysqlUrl(),
+                    config.getMysqlUsername(),
+                    config.getMysqlPassword()
+                );
                 System.out.println("MySQL database connection established");
             }
-        } catch (ClassNotFoundException | SQLException ex) {
-            System.err.println("MySQL connection error: " + ex.getMessage());
-            ex.printStackTrace();
-            showErrorAndExit("Database connection failed: " + ex.getMessage());
-        }
-    }
 
-    /**
-     * Initialize MongoDB connection
-     */
-    private void initializeMongoDB() {
-        try {
-            String database = config.getProperty("mongodb.database");
-            MongoDataAdapter.initialize(database);
-            
-            if (!MongoDataAdapter.getInstance().isConnected()) {
-                throw new Exception("Could not connect to MongoDB database '" + database + "'");
+            // MongoDB connection
+            try {
+                MongoDataAdapter.initialize(config.getMongoDatabase());
+                if (!MongoDataAdapter.getInstance().isConnected()) {
+                    throw new Exception("Could not connect to MongoDB database '" + config.getMongoDatabase() + "'");
+                }
+                System.out.println("MongoDB connection to '" + config.getMongoDatabase() + "' established");
+            } catch (Exception ex) {
+                System.err.println("MongoDB connection error: " + ex.getMessage());
+                ex.printStackTrace();
+                // Note: Not exiting application if MongoDB fails, since it's supplementary
             }
-            System.out.println("MongoDB connection to '" + database + "' established");
-        } catch (Exception ex) {
-            System.err.println("MongoDB connection error: " + ex.getMessage());
-            ex.printStackTrace();
-            // Note: Not exiting application if MongoDB fails, since it's supplementary
-        }
-    }
 
-    /**
-     * Initialize Redis connection
-     */
-    private void initializeRedis() {
+            dataAdapter = new DataAdapter(connection);
+        } catch (ClassNotFoundException | SQLException ex) {
+            System.err.println("Database connection error: " + ex.getMessage());
+            ex.printStackTrace();
+            JOptionPane.showMessageDialog(null,
+                    "Database connection failed: " + ex.getMessage(),
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE);
+            System.exit(1);
+        }
+        
         try {
             RedisDataAdapter redisAdapter = RedisDataAdapter.getInstance();
             if (!redisAdapter.isConnected()) {
@@ -172,126 +115,39 @@ public class Application {
         }
     }
 
-    /**
-     * Initialize all views
-     */
-    private void initializeViews() {
-        try {
-            loginScreen = new LoginScreen();
-            customerView = new CustomerView();
-            cashierView = new CashierView();
-            checkoutScreen = new CheckoutView();
-            managerView = new ManagerView();
-
-            System.out.println("Views initialized successfully");
-        } catch (Exception ex) {
-            System.err.println("View initialization error: " + ex.getMessage());
-            ex.printStackTrace();
-            showErrorAndExit("Failed to initialize views: " + ex.getMessage());
-        }
-    }
-
-    /**
-     * Initialize all controllers
-     */
-    private void initializeControllers() {
-        try {
-            loginController = new LoginController(loginScreen, dataAdapter);
-            customerViewController = new CustomerViewController(customerView, dataAdapter);
-            cashierController = null; // Initialized when cashier logs in
-            checkoutController = new CheckoutController(checkoutScreen, dataAdapter);
-            managerController = new ManagerController(managerView, dataAdapter);
-            
-            System.out.println("Controllers initialized successfully");
-        } catch (Exception ex) {
-            System.err.println("Controller initialization error: " + ex.getMessage());
-            ex.printStackTrace();
-            showErrorAndExit("Failed to initialize controllers: " + ex.getMessage());
-        }
-    }
-
-    /**
-     * Show error message and exit application
-     */
-    private void showErrorAndExit(String message) {
-        JOptionPane.showMessageDialog(null, message, "Fatal Error", JOptionPane.ERROR_MESSAGE);
-        System.exit(1);
-    }
-
-    /**
-     * Get current database connection
-     */
     public static Connection getConnection() {
         return connection;
     }
 
-    /**
-     * Get current user
-     */
-    public Users getCurrentUser() {
-        return currentUser;
+    private void initializeViews() {
+        loginScreen = new LoginScreen();
+        customerView = new CustomerView();
+        cashierView = new CashierView();
+        checkoutScreen = new CheckoutView();
+        managerView = new ManagerView();
+
+        System.out.println("Views initialized successfully");
     }
 
-    /**
-     * Set current user and switch views based on role
-     */
-    public void setCurrentUser(Users user) {
-        this.currentUser = user;
-
-        SwingUtilities.invokeLater(() -> {
-            hideAllViews();
-            cleanupControllers();
-
-            if (user != null) {
-                showViewForRole(user.getRole());
-            } else {
-                loginScreen.setVisible(true);
-            }
-        });
-    }
-
-    /**
-     * Hide all views
-     */
-    private void hideAllViews() {
-        loginScreen.setVisible(false);
-        customerView.setVisible(false);
-        cashierView.setVisible(false);
-        checkoutScreen.setVisible(false);
-        managerView.setVisible(false);
-    }
-
-    /**
-     * Show appropriate view based on user role
-     */
-    private void showViewForRole(Users.Role role) {
-        switch (role) {
-            case MANAGER:
-                managerView.setVisible(true);
-                break;
-            case CASHIER:
-                cashierController = new CashierController(cashierView, dataAdapter);
-                cashierView.setVisible(true);
-                break;
-            case CUSTOMER:
-                customerView.setVisible(true);
-                break;
+    private void initializeControllers() {
+        try {
+            loginController = new LoginController(loginScreen, dataAdapter);
+            customerViewController = new CustomerViewController(customerView, dataAdapter);
+            cashierController = null; // This will be initialized when a seller logs in
+            checkoutController = new CheckoutController(checkoutScreen, dataAdapter);
+            managerController = new ManagerController(managerView, dataAdapter);
+            System.out.println("Controllers initialized successfully");
+        } catch (Exception ex) {
+            System.err.println("Controller initialization error: " + ex.getMessage());
+            ex.printStackTrace();
+            JOptionPane.showMessageDialog(null,
+                    "Failed to initialize controllers: " + ex.getMessage(),
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE);
+            System.exit(1);
         }
     }
 
-    /**
-     * Cleanup controllers
-     */
-    private void cleanupControllers() {
-        if (cashierController != null) {
-            cashierController.cleanup();
-            cashierController = null;
-        }
-    }
-
-    /**
-     * Cleanup resources
-     */
     public void cleanup() {
         try {
             if (connection != null && !connection.isClosed()) {
@@ -299,18 +155,58 @@ public class Application {
                 System.out.println("Database connection closed");
             }
 
+            // Cleanup the manager controller if it exists
             if (managerController != null) {
                 managerController.cleanup();
             }
-
-            RedisDataAdapter.getInstance().cleanup();
-            
         } catch (SQLException ex) {
             System.err.println("Error closing database connection: " + ex.getMessage());
         }
+        RedisDataAdapter.getInstance().cleanup();
     }
 
-    // Getters for views and controllers
+    public Users getCurrentUser() {
+        return currentUser;
+    }
+
+    public void setCurrentUser(Users user) {
+        this.currentUser = user;
+
+        SwingUtilities.invokeLater(() -> {
+            // Hide all views first
+            loginScreen.setVisible(false);
+            customerView.setVisible(false);
+            cashierView.setVisible(false);
+            checkoutScreen.setVisible(false);
+            managerView.setVisible(false);
+
+            // Clear any existing cart/order data before showing new view
+            if (cashierController != null) {
+                cashierController.cleanup();
+                cashierController = null;
+            }
+
+            // Then show appropriate view based on user role
+            if (user != null) {
+                switch (user.getRole()) {
+                    case MANAGER:
+                        managerView.setVisible(true);
+                        break;
+                    case CASHIER:
+                        cashierController = new CashierController(cashierView, dataAdapter);
+                        cashierView.setVisible(true);
+                        break;
+                    case CUSTOMER:
+                        customerView.setVisible(true);
+                        break;
+                }
+            } else {
+                loginScreen.setVisible(true);
+            }
+        });
+    }
+
+    // Getters
     public LoginScreen getLoginScreen() { return loginScreen; }
     public CustomerView getMainScreen() { return customerView; }
     public CashierView getCashierView() { return cashierView; }
@@ -321,23 +217,21 @@ public class Application {
     public CustomerViewController getMainScreenController() { return customerViewController; }
     public CashierController getCashierController() { return cashierController; }
     public ManagerController getManagerController() { return managerController; }
+    public AppConfig getConfig() { return config; }
 
-    /**
-     * Main application entry point
-     */
     public static void main(String[] args) {
         try {
-            // Set system look and feel
-            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeel());
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
 
             SwingUtilities.invokeLater(() -> {
                 try {
                     Application app = Application.getInstance();
                     app.getLoginScreen().setVisible(true);
 
-                    // Add shutdown hook for cleanup
-                    Runtime.getRuntime().addShutdownHook(new Thread(app::cleanup));
-                    
+                    // Add shutdown hook to cleanup resources
+                    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                        app.cleanup();
+                    }));
                 } catch (Exception e) {
                     e.printStackTrace();
                     JOptionPane.showMessageDialog(null,
